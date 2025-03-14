@@ -1,0 +1,2 @@
+unet_lungs_segmentation==1.0.4
+gradio==4.44.1
