@@ -1,7 +1,6 @@
 import numpy as np
 import tifffile
 from PIL import Image
-
 from unet_lungs_segmentation import LungsPredict
 
 model = LungsPredict()
@@ -28,46 +27,51 @@ def segment_volume(volume):
         return None
     return model.segment_lungs(volume)
 
-def browse_raw_slice(z_idx, volume):
-    """
-    Show just the raw slice at z_idx.
-    """
+def browse_all_axes(relative_idx, volume):
+    """Return raw Z/Y/X slices at relative index."""
     if volume is None:
-        return None
-    z_dim = volume.shape[0]
-    z_idx = max(0, min(z_idx, z_dim - 1))
+        return None, None, None
 
-    # Slice the volume
-    raw_slice = volume[z_idx]
-    # Convert raw slice to 8-bit grayscale
-    raw_8bit = _to_8bit(raw_slice)
-    return Image.fromarray(raw_8bit)
+    z, y, x = volume.shape
+    idx_z = int(relative_idx * (z - 1))
+    idx_y = int(relative_idx * (y - 1))
+    idx_x = int(relative_idx * (x - 1))
 
-def browse_overlay_slice(z_idx, volume, seg):
-    """
-    Show an overlay of the raw slice + mask in red for the given z_idx.
-    """
+    slice_z = _to_8bit(volume[idx_z])
+    slice_y = _to_8bit(volume[:, idx_y, :])
+    slice_x = _to_8bit(volume[:, :, idx_x])
+
+    return (
+        Image.fromarray(slice_z),
+        Image.fromarray(slice_y),
+        Image.fromarray(slice_x)
+    )
+
+def browse_overlay_all_axes(relative_idx, volume, seg):
+    """Return overlay Z/Y/X slices at relative index."""
     if volume is None or seg is None:
-        return None
-    z_dim = volume.shape[0]
-    z_idx = max(0, min(z_idx, z_dim - 1))
+        return None, None, None
 
-    # Slice the volume
-    raw_slice = volume[z_idx]
-    seg_slice = seg[z_idx]  # 0 or 1
+    z, y, x = volume.shape
+    idx_z = int(relative_idx * (z - 1))
+    idx_y = int(relative_idx * (y - 1))
+    idx_x = int(relative_idx * (x - 1))
 
-    # Convert raw slice to 8-bit grayscale
-    raw_8bit = _to_8bit(raw_slice)
-    # Make 3-channel RGB
-    raw_rgb = np.stack([raw_8bit, raw_8bit, raw_8bit], axis=-1)
+    slices = [
+        (volume[idx_z], seg[idx_z]),
+        (volume[:, idx_y, :], seg[:, idx_y, :]),
+        (volume[:, :, idx_x], seg[:, :, idx_x]),
+    ]
 
-    # Create a red mask for seg=1
-    mask_rgb = np.zeros_like(raw_rgb)
-    mask_rgb[..., 0] = (seg_slice * 255).astype(np.uint8)
+    result = []
+    for raw_slice, seg_slice in slices:
+        raw_8bit = _to_8bit(raw_slice)
+        raw_rgb = np.stack([raw_8bit] * 3, axis=-1)
+        mask_rgb = np.zeros_like(raw_rgb)
+        mask_rgb[..., 0] = (seg_slice * 255).astype(np.uint8)
 
-    # Alpha-blend
-    alpha = 0.3
-    blended = (1 - alpha) * raw_rgb + alpha * mask_rgb
-    blended = blended.astype(np.uint8)
+        alpha = 0.3
+        blended = (1 - alpha) * raw_rgb + alpha * mask_rgb
+        result.append(Image.fromarray(blended.astype(np.uint8)))
 
-    return Image.fromarray(blended)
+    return tuple(result)

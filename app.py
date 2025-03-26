@@ -1,21 +1,5 @@
 import gradio as gr
-
 from core.utils import *
-
-def update_slider_range_for_volume(volume):
-    """Update the first slider's range based on the volume shape."""
-    if volume is None:
-        return gr.update(minimum=0, maximum=0, value=0, visible=False)
-    return gr.update(minimum=0, maximum=volume.shape[0] - 1, value=0, visible=True)
-
-def update_slider_range_for_overlay(seg, volume):
-    """
-    Update the second slider's range based on the segmentation shape.
-    We'll use the same Z dimension as the volume or seg.
-    """
-    if seg is None or volume is None:
-        return gr.update(minimum=0, maximum=0, value=0, visible=False)
-    return gr.update(minimum=0, maximum=volume.shape[0] - 1, value=0, visible=True)
 
 def reset_app():
     """
@@ -31,72 +15,50 @@ def reset_app():
         None,
         None,
         gr.update(visible=False),
-        gr.update(minimum=0, maximum=0, value=0, visible=False),
+        gr.update(value=0.5),
+        gr.update(value=None),
+        gr.update(value=None),
         gr.update(value=None),
         gr.update(visible=False),
-        gr.update(visible=False),
-        gr.update(minimum=0, maximum=0, value=0, visible=False),
-        gr.update(value=None)
+        gr.update(value=None),
+        gr.update(value=None),
+        gr.update(value=None),
     )
 
-# Main app
 with gr.Blocks() as demo:
-    # Title of the page
     gr.Markdown("# 3D Lungs Segmentation")
 
     volume_state = gr.State()
     seg_state = gr.State()
 
-    # (1) File input
-    file_input = gr.File(
-        file_types=[".tif", ".tiff"],
-        label="Upload your 3D TIF or TIFF file!"
-    )
+    file_input = gr.File(file_types=[".tif", ".tiff"], label="Upload your 3D TIF or TIFF file")
 
-    # (2) File uploaded viewer
+    # --- Raw Slice Viewer ---
     with gr.Group(visible=False) as group_input:
-        gr.Markdown("### View the Raw Volume")
-        z_slider_input = gr.Slider(
-            minimum=0, 
-            maximum=0,
-            step=1,
-            value=0,
-            label="Raw Volume Z-Slice",
-            visible=False
-        )
-        raw_slice_img = gr.Image(label="Raw Slice")
+        gr.Markdown("### Raw Slices (Z / Y / X)")
+        rel_slider = gr.Slider(0, 1, step=0.01, value=0.5, label="Relative Slice Index")
+        with gr.Row():
+            img_z = gr.Image(label="Z")
+            img_y = gr.Image(label="Y")
+            img_x = gr.Image(label="X")
 
-    # (3) Segment button (hidden until file is uploaded)
     segment_btn = gr.Button("Segment", visible=False)
 
-    # (4) Segmentation overlay viewer
+    # --- Overlay Viewer ---
     with gr.Group(visible=False) as group_seg:
-        gr.Markdown("### View the Overlay (Raw + Mask)")
-        z_slider_seg = gr.Slider(
-            minimum=0,
-            maximum=0,
-            step=1,
-            value=0,
-            label="Overlay Volume Z-Slice",
-            visible=False
-        )
-        overlay_slice_img = gr.Image(label="Overlay Slice")
+        gr.Markdown("### Segmentation Overlay (Z / Y / X)")
+        with gr.Row():
+            img_z_overlay = gr.Image(label="Z + Mask")
+            img_y_overlay = gr.Image(label="Y + Mask")
+            img_x_overlay = gr.Image(label="X + Mask")
 
-    # (5) Reset button
-    reset_btn = gr.Button("Reset", visible=True)
+    reset_btn = gr.Button("Reset")
 
-    # ---- CALL-BACKS ----
-    #
-    # A) On file upload -> load volume -> store in volume_state
-    #    then update slider range -> show group input -> show segmentation button
+    # A) On file upload → load → update state → show viewer → trigger image view
     file_input.change(
         fn=load_volume,
         inputs=file_input,
         outputs=volume_state
-    ).then(
-        fn=update_slider_range_for_volume,
-        inputs=volume_state,
-        outputs=z_slider_input
     ).then(
         fn=lambda vol: gr.update(visible=(vol is not None)),
         inputs=volume_state,
@@ -105,39 +67,42 @@ with gr.Blocks() as demo:
         fn=lambda vol: gr.update(visible=(vol is not None)),
         inputs=volume_state,
         outputs=segment_btn
+    ).then(
+        fn=browse_all_axes,
+        inputs=[rel_slider, volume_state],
+        outputs=[img_z, img_y, img_x]
     )
 
-    # B) On z_slider_input change -> show raw slice
-    z_slider_input.change(
-        fn=browse_raw_slice,
-        inputs=[z_slider_input, volume_state],
-        outputs=raw_slice_img
+    # B) Slider changes raw slices
+    rel_slider.change(
+        fn=browse_all_axes,
+        inputs=[rel_slider, volume_state],
+        outputs=[img_z, img_y, img_x]
     )
 
-    # C) On "Segment" -> segment_volume -> store in seg_state
-    #    then update second slider range -> show group_seg
+    # C) Segment → store state → show overlays
     segment_btn.click(
         fn=segment_volume,
         inputs=volume_state,
         outputs=seg_state
     ).then(
-        fn=update_slider_range_for_overlay,
-        inputs=[seg_state, volume_state],
-        outputs=z_slider_seg
-    ).then(
         fn=lambda s: gr.update(visible=(s is not None)),
         inputs=seg_state,
         outputs=group_seg
+    ).then(
+        fn=browse_overlay_all_axes,
+        inputs=[rel_slider, volume_state, seg_state],
+        outputs=[img_z_overlay, img_y_overlay, img_x_overlay]
     )
 
-    # D) On z_slider_seg change -> show overlay slice
-    z_slider_seg.change(
-        fn=browse_overlay_slice,
-        inputs=[z_slider_seg, volume_state, seg_state],
-        outputs=overlay_slice_img
+    # D) Slider changes overlays too
+    rel_slider.change(
+        fn=browse_overlay_all_axes,
+        inputs=[rel_slider, volume_state, seg_state],
+        outputs=[img_z_overlay, img_y_overlay, img_x_overlay]
     )
 
-    # E) Reset everything when clicked
+    # E) Reset everything
     reset_btn.click(
         fn=reset_app,
         inputs=[],
@@ -146,12 +111,14 @@ with gr.Blocks() as demo:
             volume_state,
             seg_state,
             group_input,
-            z_slider_input,
-            raw_slice_img,
-            segment_btn,
+            rel_slider,
+            img_z,
+            img_y,
+            img_x,
             group_seg,
-            z_slider_seg,
-            overlay_slice_img
+            img_z_overlay,
+            img_y_overlay,
+            img_x_overlay
         ]
     )
 
