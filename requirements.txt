@@ -1,2 +1,2 @@
-unet_lungs_segmentation==1.0.7
+unet_lungs_segmentation==1.0.8
 gradio==4.44.1

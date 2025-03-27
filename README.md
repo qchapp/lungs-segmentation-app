@@ -6,7 +6,7 @@ A web-based application for automated lung segmentation using deep learning, pow
 </p>
 
 ## Try the app
-The application is running on [Hugging Face](https://huggingface.co/), try it using this [link](https://huggingface.co/spaces/titi100/3d-lungs-segmentation)!
+The application is running on [Hugging Face](https://huggingface.co/), try it using this [link](https://huggingface.co/spaces/qchapp/3d-lungs-segmentation)!
 
 ## Installation
 We recommend performing the installation in a clean Python environment.
@@ -26,4 +26,4 @@ python app.py
 And go to http://localhost:7860/.
 
 ## About Lungs Segmentation
-If you are interesten in the package used for segmentation please check the following [GitHub repository](https://github.com/titi1000/lungs-segmentation)!
+If you are interesten in the package used for segmentation please check the following [GitHub repository](https://github.com/qchapp/lungs-segmentation)!

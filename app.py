@@ -59,6 +59,8 @@ with gr.Blocks() as demo:
 
     reset_btn = gr.Button("Reset")
 
+    gr.Markdown("#### 📝 This work is based on the Bachelor Thesis of Quentin Chappuis 2024; for more information, consult the [repository](https://github.com/qchapp/lungs-segmentation)!")
+
     # ---- CALLBACKS ----
 
     # A) Load volume
