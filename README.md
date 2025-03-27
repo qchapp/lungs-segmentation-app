@@ -5,6 +5,9 @@ A web-based application for automated lung segmentation using deep learning, pow
     <img src="images/app.png" height="700">
 </p>
 
+## Try the app
+The application is running on [Hugging Face](https://huggingface.co/), try it using this [link](https://huggingface.co/spaces/titi100/3d-lungs-segmentation)!
+
 ## Installation
 We recommend performing the installation in a clean Python environment.
 
