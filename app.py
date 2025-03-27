@@ -1,60 +1,67 @@
 import gradio as gr
 from core.utils import *
 
+def get_axis_max(volume, axis):
+    """Get the maximum index of each axis."""
+    if volume is None:
+        return 0
+    shape = volume.shape
+    return shape[{"Z": 0, "Y": 1, "X": 2}[axis]] - 1
+
 def reset_app():
-    """
-    Reset everything to the initial state:
-      - Clear file input
-      - Clear volume_state, seg_state
-      - Hide both groups
-      - Hide the segment button
-      - Reset sliders + images
-    """
+    """Reset everything to the initial state."""
     return (
         gr.update(value=None),
         None,
         None,
         gr.update(visible=False),
-        gr.update(value=0.5),
-        gr.update(value=None),
-        gr.update(value=None),
-        gr.update(value=None),
+        gr.update(value=0), gr.update(value=0), gr.update(value=0),
+        gr.update(value=None), gr.update(value=None), gr.update(value=None),
         gr.update(visible=False),
-        gr.update(value=None),
-        gr.update(value=None),
-        gr.update(value=None),
+        gr.update(value=0), gr.update(value=0), gr.update(value=0),
+        gr.update(value=None), gr.update(value=None), gr.update(value=None)
     )
 
 with gr.Blocks() as demo:
-    gr.Markdown("# 3D Lungs Segmentation")
+    gr.Markdown("# 🐭 3D Lungs Segmentation")
+    gr.Markdown("### ⚠️ Note: the visualization may take some time to render!")
 
     volume_state = gr.State()
     seg_state = gr.State()
 
     file_input = gr.File(file_types=[".tif", ".tiff"], label="Upload your 3D TIF or TIFF file")
 
-    # --- Raw Slice Viewer ---
+    # ---- RAW SLICES VIEWER ----
     with gr.Group(visible=False) as group_input:
-        gr.Markdown("### Raw Slices (Z / Y / X)")
-        rel_slider = gr.Slider(0, 1, step=0.01, value=0.5, label="Relative Slice Index")
+        gr.Markdown("### Raw Volume Slices")
         with gr.Row():
-            img_z = gr.Image(label="Z")
-            img_y = gr.Image(label="Y")
-            img_x = gr.Image(label="X")
+            z_slider = gr.Slider(0, 0, step=1, label="Z Slice")
+            y_slider = gr.Slider(0, 0, step=1, label="Y Slice")
+            x_slider = gr.Slider(0, 0, step=1, label="X Slice")
+        with gr.Row():
+            z_img = gr.Image(label="Z")
+            y_img = gr.Image(label="Y")
+            x_img = gr.Image(label="X")
 
-    segment_btn = gr.Button("Segment", visible=False)
+    segment_btn = gr.Button("Segment", visible=False)   
 
-    # --- Overlay Viewer ---
+    # ---- OVERLAY SLICES VIEWER ----
     with gr.Group(visible=False) as group_seg:
-        gr.Markdown("### Segmentation Overlay (Z / Y / X)")
+        gr.Markdown("### Segmentation Overlay Slices")
         with gr.Row():
-            img_z_overlay = gr.Image(label="Z + Mask")
-            img_y_overlay = gr.Image(label="Y + Mask")
-            img_x_overlay = gr.Image(label="X + Mask")
+            z_slider_seg = gr.Slider(0, 0, step=1, label="Z Slice (Overlay)")
+            y_slider_seg = gr.Slider(0, 0, step=1, label="Y Slice (Overlay)")
+            x_slider_seg = gr.Slider(0, 0, step=1, label="X Slice (Overlay)")
+        with gr.Row():
+            z_img_overlay = gr.Image(label="Z + Mask")
+            y_img_overlay = gr.Image(label="Y + Mask")
+            x_img_overlay = gr.Image(label="X + Mask")
 
     reset_btn = gr.Button("Reset")
 
-    # A) On file upload → load → update state → show viewer → trigger image view
+    # ---- CALLBACKS ----
+
+    # A) Load volume
     file_input.change(
         fn=load_volume,
         inputs=file_input,
@@ -68,19 +75,29 @@ with gr.Blocks() as demo:
         inputs=volume_state,
         outputs=segment_btn
     ).then(
-        fn=browse_all_axes,
-        inputs=[rel_slider, volume_state],
-        outputs=[img_z, img_y, img_x]
+        fn=lambda vol: (
+            gr.update(maximum=get_axis_max(vol, "Z")),
+            gr.update(maximum=get_axis_max(vol, "Y")),
+            gr.update(maximum=get_axis_max(vol, "X")),
+        ),
+        inputs=volume_state,
+        outputs=[z_slider, y_slider, x_slider]
+    ).then(
+        fn=lambda vol: (
+            browse_axis("Z", 0, vol),
+            browse_axis("Y", 0, vol),
+            browse_axis("X", 0, vol),
+        ),
+        inputs=volume_state,
+        outputs=[z_img, y_img, x_img]
     )
 
-    # B) Slider changes raw slices
-    rel_slider.change(
-        fn=browse_all_axes,
-        inputs=[rel_slider, volume_state],
-        outputs=[img_z, img_y, img_x]
-    )
+    # B) RAW sliders
+    z_slider.change(fn=lambda idx, vol: browse_axis("Z", idx, vol), inputs=[z_slider, volume_state], outputs=z_img)
+    y_slider.change(fn=lambda idx, vol: browse_axis("Y", idx, vol), inputs=[y_slider, volume_state], outputs=y_img)
+    x_slider.change(fn=lambda idx, vol: browse_axis("X", idx, vol), inputs=[x_slider, volume_state], outputs=x_img)
 
-    # C) Segment → store state → show overlays
+    # C) Segment
     segment_btn.click(
         fn=segment_volume,
         inputs=volume_state,
@@ -90,19 +107,29 @@ with gr.Blocks() as demo:
         inputs=seg_state,
         outputs=group_seg
     ).then(
-        fn=browse_overlay_all_axes,
-        inputs=[rel_slider, volume_state, seg_state],
-        outputs=[img_z_overlay, img_y_overlay, img_x_overlay]
+        fn=lambda vol: (
+            gr.update(maximum=get_axis_max(vol, "Z")),
+            gr.update(maximum=get_axis_max(vol, "Y")),
+            gr.update(maximum=get_axis_max(vol, "X")),
+        ),
+        inputs=volume_state,
+        outputs=[z_slider_seg, y_slider_seg, x_slider_seg]
+    ).then(
+        fn=lambda z, y, x, vol, seg: (
+            browse_overlay_axis("Z", z, vol, seg),
+            browse_overlay_axis("Y", y, vol, seg),
+            browse_overlay_axis("X", x, vol, seg),
+        ),
+        inputs=[z_slider_seg, y_slider_seg, x_slider_seg, volume_state, seg_state],
+        outputs=[z_img_overlay, y_img_overlay, x_img_overlay]
     )
 
-    # D) Slider changes overlays too
-    rel_slider.change(
-        fn=browse_overlay_all_axes,
-        inputs=[rel_slider, volume_state, seg_state],
-        outputs=[img_z_overlay, img_y_overlay, img_x_overlay]
-    )
+    # D) OVERLAY sliders
+    z_slider_seg.change(fn=lambda idx, vol, seg: browse_overlay_axis("Z", idx, vol, seg), inputs=[z_slider_seg, volume_state, seg_state], outputs=z_img_overlay)
+    y_slider_seg.change(fn=lambda idx, vol, seg: browse_overlay_axis("Y", idx, vol, seg), inputs=[y_slider_seg, volume_state, seg_state], outputs=y_img_overlay)
+    x_slider_seg.change(fn=lambda idx, vol, seg: browse_overlay_axis("X", idx, vol, seg), inputs=[x_slider_seg, volume_state, seg_state], outputs=x_img_overlay)
 
-    # E) Reset everything
+    # E) Reset
     reset_btn.click(
         fn=reset_app,
         inputs=[],
@@ -111,14 +138,11 @@ with gr.Blocks() as demo:
             volume_state,
             seg_state,
             group_input,
-            rel_slider,
-            img_z,
-            img_y,
-            img_x,
+            z_slider, y_slider, x_slider,
+            z_img, y_img, x_img,
             group_seg,
-            img_z_overlay,
-            img_y_overlay,
-            img_x_overlay
+            z_slider_seg, y_slider_seg, x_slider_seg,
+            z_img_overlay, y_img_overlay, x_img_overlay
         ]
     )
 

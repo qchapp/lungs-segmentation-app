@@ -27,51 +27,44 @@ def segment_volume(volume):
         return None
     return model.segment_lungs(volume)
 
-def browse_all_axes(relative_idx, volume):
-    """Return raw Z/Y/X slices at relative index."""
+def browse_axis(axis, idx, volume):
+    """Return a single raw slice for the given axis."""
     if volume is None:
-        return None, None, None
+        return None
 
-    z, y, x = volume.shape
-    idx_z = int(relative_idx * (z - 1))
-    idx_y = int(relative_idx * (y - 1))
-    idx_x = int(relative_idx * (x - 1))
+    if axis == "Z":
+        slice_ = volume[idx]
+    elif axis == "Y":
+        slice_ = volume[:, idx, :]
+    elif axis == "X":
+        slice_ = volume[:, :, idx]
+    else:
+        return None
 
-    slice_z = _to_8bit(volume[idx_z])
-    slice_y = _to_8bit(volume[:, idx_y, :])
-    slice_x = _to_8bit(volume[:, :, idx_x])
+    return Image.fromarray(_to_8bit(slice_))
 
-    return (
-        Image.fromarray(slice_z),
-        Image.fromarray(slice_y),
-        Image.fromarray(slice_x)
-    )
-
-def browse_overlay_all_axes(relative_idx, volume, seg):
-    """Return overlay Z/Y/X slices at relative index."""
+def browse_overlay_axis(axis, idx, volume, seg):
+    """Return a single overlay slice for the given axis."""
     if volume is None or seg is None:
-        return None, None, None
+        return None
 
-    z, y, x = volume.shape
-    idx_z = int(relative_idx * (z - 1))
-    idx_y = int(relative_idx * (y - 1))
-    idx_x = int(relative_idx * (x - 1))
+    if axis == "Z":
+        raw = volume[idx]
+        mask = seg[idx]
+    elif axis == "Y":
+        raw = volume[:, idx, :]
+        mask = seg[:, idx, :]
+    elif axis == "X":
+        raw = volume[:, :, idx]
+        mask = seg[:, :, idx]
+    else:
+        return None
 
-    slices = [
-        (volume[idx_z], seg[idx_z]),
-        (volume[:, idx_y, :], seg[:, idx_y, :]),
-        (volume[:, :, idx_x], seg[:, :, idx_x]),
-    ]
+    raw_8bit = _to_8bit(raw)
+    raw_rgb = np.stack([raw_8bit] * 3, axis=-1)
+    mask_rgb = np.zeros_like(raw_rgb)
+    mask_rgb[..., 0] = (mask * 255).astype(np.uint8)
 
-    result = []
-    for raw_slice, seg_slice in slices:
-        raw_8bit = _to_8bit(raw_slice)
-        raw_rgb = np.stack([raw_8bit] * 3, axis=-1)
-        mask_rgb = np.zeros_like(raw_rgb)
-        mask_rgb[..., 0] = (seg_slice * 255).astype(np.uint8)
-
-        alpha = 0.3
-        blended = (1 - alpha) * raw_rgb + alpha * mask_rgb
-        result.append(Image.fromarray(blended.astype(np.uint8)))
-
-    return tuple(result)
+    alpha = 0.3
+    blended = (1 - alpha) * raw_rgb + alpha * mask_rgb
+    return Image.fromarray(blended.astype(np.uint8))
