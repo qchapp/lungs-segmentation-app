@@ -1,5 +1,8 @@
 import numpy as np
 import tifffile
+import os
+import tempfile
+import urllib.request
 from PIL import Image
 from unet_lungs_segmentation import LungsPredict
 
@@ -68,3 +71,17 @@ def browse_overlay_axis(axis, idx, volume, seg):
     alpha = 0.3
     blended = (1 - alpha) * raw_rgb + alpha * mask_rgb
     return Image.fromarray(blended.astype(np.uint8))
+
+# Example file
+def get_example_file():
+    url = "https://zenodo.org/record/8099852/files/lungs_ct.tif?download=1"
+    tmp_dir = tempfile.gettempdir()
+    tmp_path = os.path.join(tmp_dir, "example_lungs.tif")
+
+    # Only download if it doesn't already exist
+    if not os.path.exists(tmp_path):
+        urllib.request.urlretrieve(url, tmp_path)
+
+    return tmp_path
+
+example_file_path = get_example_file()

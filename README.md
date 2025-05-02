@@ -5,8 +5,28 @@ A web-based application for automated lung segmentation using deep learning, pow
     <img src="images/app.png" height="700">
 </p>
 
+---
+
 ## Try the app
 The application is running on [Hugging Face](https://huggingface.co/), try it using this [link](https://huggingface.co/spaces/qchapp/3d-lungs-segmentation)!
+
+#### Example File
+If you don't have your own `.tif` image, the app includes a built-in example file that can be used directly from the UI by clicking **"Try an example!"**.
+
+#### Load from URL (file_url parameter)
+You can also provide a `.tif` file hosted online using a URL parameter.
+
+To do so, simply append `?file_url=...` to your app's URL.
+
+##### Example (local):
+`http://localhost:7860/?file_url=https://zenodo.org/record/8099852/files/lungs_ct.tif`
+
+##### Example (hosted on Hugging Face):
+`https://huggingface.co/spaces/qchapp/3d-lungs-segmentation/?file_url=https://zenodo.org/record/8099852/files/lungs_ct.tif`
+
+The application will automatically download the file and load it into the viewer.
+
+---
 
 ## Installation
 We recommend performing the installation in a clean Python environment.
@@ -18,6 +38,8 @@ After that please run the following command:
 pip install -r requirements.txt
 ```
 
+---
+
 ## Usage
 Run:
 ```sh
@@ -25,5 +47,9 @@ python app.py
 ```
 And go to http://localhost:7860/.
 
+---
+
 ## About Lungs Segmentation
 If you are interesten in the package used for segmentation please check the following [GitHub repository](https://github.com/qchapp/lungs-segmentation)!
+
+---

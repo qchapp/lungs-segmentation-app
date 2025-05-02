@@ -1,6 +1,9 @@
 import gradio as gr
 from core.utils import *
 
+import urllib.request
+import tempfile
+
 def get_axis_max(volume, axis):
     """Get the maximum index of each axis."""
     if volume is None:
@@ -31,6 +34,14 @@ with gr.Blocks() as demo:
 
     file_input = gr.File(file_types=[".tif", ".tiff"], label="Upload your 3D TIF or TIFF file")
 
+    # ---- Example loader ----
+    gr.Examples(
+        examples=[[example_file_path]],
+        inputs=[file_input],
+        label="Try an example!",
+        examples_per_page=1
+    )
+
     # ---- RAW SLICES VIEWER ----
     with gr.Group(visible=False) as group_input:
         gr.Markdown("### Raw Volume Slices")
@@ -59,7 +70,7 @@ with gr.Blocks() as demo:
 
     reset_btn = gr.Button("Reset")
 
-    gr.Markdown("#### 📝 This work is based on the Bachelor Thesis of Quentin Chappuis 2024; for more information, consult the [repository](https://github.com/qchapp/lungs-segmentation)!")
+    gr.Markdown("#### 📝 This work is based on the Bachelor Project of Quentin Chappuis 2024; for more information, consult the [repository](https://github.com/qchapp/lungs-segmentation)!")
 
     # ---- CALLBACKS ----
 
@@ -147,6 +158,63 @@ with gr.Blocks() as demo:
             z_img_overlay, y_img_overlay, x_img_overlay
         ]
     )
+
+    # ---- HANDLE QUERY PARAMETERS ----
+    @demo.load(
+        outputs=[
+            file_input,
+            volume_state,
+            group_input,
+            segment_btn,
+            z_slider, y_slider, x_slider,
+            z_img, y_img, x_img
+        ]
+    )
+    def load_from_query(request: gr.Request):
+        params = request.query_params
+
+        if "file_url" in params:
+            try:
+                # A) Download the file from the URL to a temporary path
+                url = params["file_url"]
+                tmp_path = tempfile.mktemp(suffix=".tif")
+                urllib.request.urlretrieve(url, tmp_path)
+
+                # B) Open the file as a binary object
+                with open(tmp_path, "rb") as f:
+                    volume = load_volume(f)
+
+                # C) Return values for all components
+                return [
+                    gr.update(value=tmp_path),
+                    volume,
+                    gr.update(visible=True),
+                    gr.update(visible=True),
+                    gr.update(maximum=get_axis_max(volume, "Z")),
+                    gr.update(maximum=get_axis_max(volume, "Y")),
+                    gr.update(maximum=get_axis_max(volume, "X")),
+                    browse_axis("Z", 0, volume),
+                    browse_axis("Y", 0, volume),
+                    browse_axis("X", 0, volume)
+                ]
+
+            except Exception as e:
+                print(f"[Error loading file_url] {e}")
+
+        # Fallback if no file_url or failure
+        return [
+            None,
+            None,
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(maximum=0),
+            gr.update(maximum=0),
+            gr.update(maximum=0),
+            None,
+            None,
+            None
+        ]
+
 
 if __name__ == "__main__":
     demo.launch()
