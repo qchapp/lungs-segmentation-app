@@ -3,6 +3,26 @@ from core.utils import *
 
 import urllib.request
 import tempfile
+import os, time, threading, atexit
+import tifffile
+from core.utils import APP_TMP_DIR, clean_temp, write_mask_tif
+
+CLEAN_EVERY_SEC = int(os.environ.get("CLEAN_EVERY_SEC", "1800"))         # default: 30 min
+CLEAN_AGE_HOURS = float(os.environ.get("CLEAN_AGE_HOURS", "6"))          # default: 6 hours
+
+def _start_cleanup_daemon():
+    def _loop():
+        while True:
+            try:
+                clean_temp(CLEAN_AGE_HOURS)
+            except Exception as e:
+                print(f"[cleanup daemon] {e}")
+            time.sleep(CLEAN_EVERY_SEC)
+    threading.Thread(target=_loop, daemon=True).start()
+
+_start_cleanup_daemon()
+atexit.register(lambda: clean_temp(0))
+
 
 def get_axis_max(volume, axis):
     """Get the maximum index of each axis."""
@@ -25,7 +45,35 @@ def reset_app():
         gr.update(value=None), gr.update(value=None), gr.update(value=None)
     )
 
+def segment_api(file_obj):
+    """
+    Accepts a TIF/TIFF via API, returns a TIF mask file path.
+    """
+    if not file_obj:
+        raise gr.Error("No file provided")
+
+    # Read volume (and let load_volume clean the temp upload)
+    volume = load_volume(file_obj)
+    seg = segment_volume(volume)  # uses your existing model wrapper
+    if seg is None:
+        raise gr.Error("Segmentation failed")
+
+    # Write compressed TIF to app temp; return file path
+    out_path = write_mask_tif(seg)
+    return out_path
+
 with gr.Blocks() as demo:
+    # ---- API (hidden) ----
+    _api_in = gr.File(file_types=[".tif", ".tiff"], visible=False)
+    _api_out = gr.File(visible=False)
+    gr.Button(visible=False).click(
+        fn=segment_api,
+        inputs=_api_in,
+        outputs=_api_out,
+        api_name="segment"
+    )
+
+    # ---- UI ----
     gr.Markdown("# 🐭 3D Lungs Segmentation")
     gr.Markdown("### ⚠️ Note: the visualization may take some time to render!")
 
@@ -175,14 +223,22 @@ with gr.Blocks() as demo:
 
         if "file_url" in params:
             try:
-                # A) Download the file from the URL to a temporary path
+                # A) Download the file from the URL to a managed temporary path
                 url = params["file_url"]
-                tmp_path = tempfile.mktemp(suffix=".tif")
+                fd, tmp_path = tempfile.mkstemp(suffix=".tif", dir=str(APP_TMP_DIR))
+                os.close(fd)
                 urllib.request.urlretrieve(url, tmp_path)
 
                 # B) Open the file as a binary object
                 with open(tmp_path, "rb") as f:
                     volume = load_volume(f)
+
+                # Remove downloaded temp file now that it's in memory
+                try:
+                    os.remove(tmp_path)
+                except Exception as e:
+                    print(f"[load_from_query] couldn't remove {tmp_path}: {e}")
+
 
                 # C) Return values for all components
                 return [

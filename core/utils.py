@@ -4,9 +4,39 @@ import os
 import tempfile
 import urllib.request
 from PIL import Image
+from pathlib import Path
+import time, uuid, atexit
 from unet_lungs_segmentation import LungsPredict
 
 model = LungsPredict()
+
+APP_TMP_DIR = Path(os.environ.get("APP_TMP_DIR", Path(tempfile.gettempdir()) / "lungs_seg_tmp"))
+APP_TMP_DIR.mkdir(parents=True, exist_ok=True)
+
+def new_tmp_path(basename: str = "tmp.tif") -> str:
+    """Return a unique path inside the app temp dir."""
+    uid = uuid.uuid4().hex[:8]
+    return str(APP_TMP_DIR / f"{uid}_{basename}")
+
+def clean_temp(max_age_hours: float = 6.0) -> None:
+    """Delete old files in our app temp dir (keeps the example by name)."""
+    cutoff = time.time() - max_age_hours * 3600 if max_age_hours > 0 else float("inf")
+    for p in APP_TMP_DIR.glob("*"):
+        try:
+            if p.name == "example_lungs.tif":
+                continue  # don't delete the cached example
+            if max_age_hours == 0 or p.stat().st_mtime < cutoff:
+                p.unlink(missing_ok=True)
+        except Exception as e:
+            print(f"[cleanup] could not remove {p}: {e}")
+
+atexit.register(lambda: clean_temp(0))  # purge on shutdown
+
+def write_mask_tif(mask: np.ndarray) -> str:
+    """Write a mask volume to a compressed TIFF in app temp and return the path."""
+    out_path = new_tmp_path("mask.tif")
+    tifffile.imwrite(out_path, mask.astype(np.uint8), compression="zlib")
+    return out_path
 
 def _to_8bit(arr):
     """Convert float/int array to 8-bit [0..255]."""
@@ -19,10 +49,23 @@ def _to_8bit(arr):
     return (norm * 255).astype(np.uint8)
 
 def load_volume(file_obj):
-    """Read the uploaded TIF as a NumPy array (Z, Y, X)."""
+    """Read the uploaded TIF as a NumPy array (Z, Y, X) and clean the temp upload."""
     if not file_obj:
         return None
-    return tifffile.imread(file_obj.name)
+
+    # Gradio File can be a file-like with .name or a path-like
+    path = getattr(file_obj, "name", None) or getattr(file_obj, "path", None) or file_obj
+    arr = tifffile.imread(path)
+
+    # Remove source temp file to avoid disk growth (but keep the cached example)
+    try:
+        if path and os.path.exists(path) and os.path.basename(path) != "example_lungs.tif":
+            os.remove(path)
+    except Exception as e:
+        print(f"[load_volume] couldn't remove temp file {path}: {e}")
+
+    return arr
+
 
 def segment_volume(volume):
     """Run segmentation on the loaded volume (return shape (Z, Y, X))."""
@@ -75,13 +118,9 @@ def browse_overlay_axis(axis, idx, volume, seg):
 # Example file
 def get_example_file():
     url = "https://zenodo.org/record/8099852/files/lungs_ct.tif?download=1"
-    tmp_dir = tempfile.gettempdir()
-    tmp_path = os.path.join(tmp_dir, "example_lungs.tif")
-
-    # Only download if it doesn't already exist
-    if not os.path.exists(tmp_path):
+    tmp_path = APP_TMP_DIR / "example_lungs.tif"
+    if not tmp_path.exists():
         urllib.request.urlretrieve(url, tmp_path)
-
-    return tmp_path
+    return str(tmp_path)
 
 example_file_path = get_example_file()
