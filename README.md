@@ -49,6 +49,27 @@ And go to http://localhost:7860/.
 
 ---
 
+## Usage as an API
+Install `gradio_client` and run the following Python code:
+```py
+from pathlib import Path
+import shutil
+from gradio_client import Client, handle_file
+
+client = Client("https://huggingface.co/spaces/qchapp/3d-lungs-segmentation/")
+result_path = client.predict(
+    file_obj=handle_file("https://zenodo.org/record/8099852/files/lungs_ct.tif?download=1"),
+    api_name="/segment",
+)
+
+dest = Path("outputs/mask.tif")
+dest.parent.mkdir(parents=True, exist_ok=True)
+shutil.copy(result_path, dest)
+print("Saved the mask in:", dest.resolve())
+```
+
+---
+
 ## About Lungs Segmentation
 If you are interesten in the package used for segmentation please check the following [GitHub repository](https://github.com/qchapp/lungs-segmentation)!
 
