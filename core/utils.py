@@ -10,7 +10,7 @@ from unet_lungs_segmentation import LungsPredict
 
 model = LungsPredict()
 
-APP_TMP_DIR = Path(os.environ.get("APP_TMP_DIR", Path(tempfile.gettempdir()) / "lungs_seg_tmp"))
+APP_TMP_DIR = Path(tempfile.gettempdir()) / "lungs_seg_tmp"
 APP_TMP_DIR.mkdir(parents=True, exist_ok=True)
 
 def new_tmp_path(basename: str = "tmp.tif") -> str:
@@ -19,12 +19,13 @@ def new_tmp_path(basename: str = "tmp.tif") -> str:
     return str(APP_TMP_DIR / f"{uid}_{basename}")
 
 def clean_temp(max_age_hours: float = 6.0) -> None:
-    """Delete old files in our app temp dir (keeps the example by name)."""
     cutoff = time.time() - max_age_hours * 3600 if max_age_hours > 0 else float("inf")
+    protected = PROTECTED_PATHS
     for p in APP_TMP_DIR.glob("*"):
         try:
-            if p.name == "example_lungs.tif":
-                continue  # don't delete the cached example
+            rp = p.resolve()
+            if rp in protected:
+                continue
             if max_age_hours == 0 or p.stat().st_mtime < cutoff:
                 p.unlink(missing_ok=True)
         except Exception as e:
@@ -38,34 +39,21 @@ def write_mask_tif(mask: np.ndarray) -> str:
     tifffile.imwrite(out_path, mask.astype(np.uint8), compression="zlib")
     return out_path
 
-def _to_8bit(arr):
-    """Convert float/int array to 8-bit [0..255]."""
-    arr = arr.astype(np.float32)
-    mn, mx = arr.min(), arr.max()
-    rng = mx - mn
-    if rng < 1e-8:
-        rng = 1.0
-    norm = (arr - mn) / rng
-    return (norm * 255).astype(np.uint8)
-
 def load_volume(file_obj):
-    """Read the uploaded TIF as a NumPy array (Z, Y, X) and clean the temp upload."""
     if not file_obj:
         return None
-
-    # Gradio File can be a file-like with .name or a path-like
     path = getattr(file_obj, "name", None) or getattr(file_obj, "path", None) or file_obj
     arr = tifffile.imread(path)
 
-    # Remove source temp file to avoid disk growth (but keep the cached example)
     try:
-        if path and os.path.exists(path) and os.path.basename(path) != "example_lungs.tif":
-            os.remove(path)
+        if path and os.path.exists(path):
+            src = Path(path).resolve()
+            if src not in PROTECTED_PATHS:
+                os.remove(src)
     except Exception as e:
         print(f"[load_volume] couldn't remove temp file {path}: {e}")
 
     return arr
-
 
 def segment_volume(volume):
     """Run segmentation on the loaded volume (return shape (Z, Y, X))."""
@@ -73,11 +61,22 @@ def segment_volume(volume):
         return None
     return model.segment_lungs(volume)
 
-def browse_axis(axis, idx, volume):
-    """Return a single raw slice for the given axis."""
+# Optimization for faster processing
+def volume_stats(volume):
+    """Return (min, max) as floats for global 8-bit scaling."""
+    if volume is None:
+        return (0.0, 1.0)
+    return float(volume.min()), float(volume.max())
+
+def _to_8bit_stats(arr, mn, mx):
+    rng = max(mx - mn, 1e-8)
+    return np.clip((arr - mn) / rng * 255.0, 0, 255).astype(np.uint8)
+
+def browse_axis_fast(axis, idx, volume, stats):
+    """Same as browse_axis but uses precomputed global stats."""
     if volume is None:
         return None
-
+    mn, mx = stats
     if axis == "Z":
         slice_ = volume[idx]
     elif axis == "Y":
@@ -86,33 +85,29 @@ def browse_axis(axis, idx, volume):
         slice_ = volume[:, :, idx]
     else:
         return None
+    return Image.fromarray(_to_8bit_stats(slice_, mn, mx))
 
-    return Image.fromarray(_to_8bit(slice_))
-
-def browse_overlay_axis(axis, idx, volume, seg):
-    """Return a single overlay slice for the given axis."""
+def browse_overlay_axis_fast(axis, idx, volume, seg, stats, alpha=0.35):
+    """Overlay using global stats (fewer allocations, faster)."""
     if volume is None or seg is None:
         return None
-
+    mn, mx = stats
     if axis == "Z":
-        raw = volume[idx]
-        mask = seg[idx]
+        raw = volume[idx];        mask = seg[idx]
     elif axis == "Y":
-        raw = volume[:, idx, :]
-        mask = seg[:, idx, :]
+        raw = volume[:, idx, :];  mask = seg[:, idx, :]
     elif axis == "X":
-        raw = volume[:, :, idx]
-        mask = seg[:, :, idx]
+        raw = volume[:, :, idx];  mask = seg[:, :, idx]
     else:
         return None
 
-    raw_8bit = _to_8bit(raw)
-    raw_rgb = np.stack([raw_8bit] * 3, axis=-1)
-    mask_rgb = np.zeros_like(raw_rgb)
-    mask_rgb[..., 0] = (mask * 255).astype(np.uint8)
+    raw8 = _to_8bit_stats(raw, mn, mx)
+    rgb  = np.repeat(raw8[..., None], 3, axis=-1)
+    # color mask in red channel
+    mask_rgb = np.zeros_like(rgb)
+    mask_rgb[..., 0] = (mask.astype(np.uint8) * 255)
 
-    alpha = 0.3
-    blended = (1 - alpha) * raw_rgb + alpha * mask_rgb
+    blended = rgb.astype(np.float32) * (1 - alpha) + mask_rgb.astype(np.float32) * alpha
     return Image.fromarray(blended.astype(np.uint8))
 
 # Example file
@@ -124,3 +119,4 @@ def get_example_file():
     return str(tmp_path)
 
 example_file_path = get_example_file()
+PROTECTED_PATHS = {Path(example_file_path).resolve()}

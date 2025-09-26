@@ -4,11 +4,10 @@ from core.utils import *
 import urllib.request
 import tempfile
 import os, time, threading, atexit
-import tifffile
 from core.utils import APP_TMP_DIR, clean_temp, write_mask_tif
 
-CLEAN_EVERY_SEC = int(os.environ.get("CLEAN_EVERY_SEC", "1800"))         # default: 30 min
-CLEAN_AGE_HOURS = float(os.environ.get("CLEAN_AGE_HOURS", "6"))          # default: 6 hours
+CLEAN_EVERY_SEC = 1800      # every 30 min
+CLEAN_AGE_HOURS = 6         # every 6 hours
 
 def _start_cleanup_daemon():
     def _loop():
@@ -62,7 +61,18 @@ def segment_api(file_obj):
     out_path = write_mask_tif(seg)
     return out_path
 
-with gr.Blocks() as demo:
+def run_seg_with_progress(volume, progress=gr.Progress(track_tqdm=True)):
+    """
+    Thin wrapper to surface a progress bar in Gradio while the model runs.
+    """
+    if volume is None:
+        return None
+    progress(0.1, desc="Preparing model…")
+    seg = segment_volume(volume)  # existing function from utils.py
+    progress(1.0, desc="Done")
+    return seg
+
+with gr.Blocks(delete_cache=(1800, 21600)) as demo:
     # ---- API (hidden) ----
     _api_in = gr.File(file_types=[".tif", ".tiff"], visible=False)
     _api_out = gr.File(visible=False)
@@ -79,6 +89,7 @@ with gr.Blocks() as demo:
 
     volume_state = gr.State()
     seg_state = gr.State()
+    norm_state = gr.State()
 
     file_input = gr.File(file_types=[".tif", ".tiff"], label="Upload your 3D TIF or TIFF file")
 
@@ -102,7 +113,9 @@ with gr.Blocks() as demo:
             y_img = gr.Image(label="Y")
             x_img = gr.Image(label="X")
 
-    segment_btn = gr.Button("Segment", visible=False)   
+    segment_btn = gr.Button("Segment", visible=False)
+
+    loading_md = gr.Markdown("⏳ **Segmenting…** This can take a bit.", visible=False)
 
     # ---- OVERLAY SLICES VIEWER ----
     with gr.Group(visible=False) as group_seg:
@@ -128,6 +141,10 @@ with gr.Blocks() as demo:
         inputs=file_input,
         outputs=volume_state
     ).then(
+        fn=volume_stats,
+        inputs=volume_state,
+        outputs=norm_state
+    ).then(
         fn=lambda vol: gr.update(visible=(vol is not None)),
         inputs=volume_state,
         outputs=group_input
@@ -144,23 +161,27 @@ with gr.Blocks() as demo:
         inputs=volume_state,
         outputs=[z_slider, y_slider, x_slider]
     ).then(
-        fn=lambda vol: (
-            browse_axis("Z", 0, vol),
-            browse_axis("Y", 0, vol),
-            browse_axis("X", 0, vol),
+        fn=lambda vol, st: (
+            browse_axis_fast("Z", 0, vol, st),
+            browse_axis_fast("Y", 0, vol, st),
+            browse_axis_fast("X", 0, vol, st),
         ),
-        inputs=volume_state,
+        inputs=[volume_state, norm_state],
         outputs=[z_img, y_img, x_img]
     )
 
     # B) RAW sliders
-    z_slider.change(fn=lambda idx, vol: browse_axis("Z", idx, vol), inputs=[z_slider, volume_state], outputs=z_img)
-    y_slider.change(fn=lambda idx, vol: browse_axis("Y", idx, vol), inputs=[y_slider, volume_state], outputs=y_img)
-    x_slider.change(fn=lambda idx, vol: browse_axis("X", idx, vol), inputs=[x_slider, volume_state], outputs=x_img)
+    z_slider.change(fn=lambda idx, vol, st: browse_axis_fast("Z", idx, vol, st), inputs=[z_slider, volume_state, norm_state], outputs=z_img)
+    y_slider.change(fn=lambda idx, vol, st: browse_axis_fast("Y", idx, vol, st), inputs=[y_slider, volume_state, norm_state], outputs=y_img)
+    x_slider.change(fn=lambda idx, vol, st: browse_axis_fast("X", idx, vol, st), inputs=[x_slider, volume_state, norm_state], outputs=x_img)
 
     # C) Segment
     segment_btn.click(
-        fn=segment_volume,
+        fn=lambda: (gr.update(visible=True), gr.update(interactive=False)),
+        inputs=[],
+        outputs=[loading_md, segment_btn]
+    ).then(
+        fn=run_seg_with_progress,  # <— shows a progress bar
         inputs=volume_state,
         outputs=seg_state
     ).then(
@@ -176,19 +197,23 @@ with gr.Blocks() as demo:
         inputs=volume_state,
         outputs=[z_slider_seg, y_slider_seg, x_slider_seg]
     ).then(
-        fn=lambda z, y, x, vol, seg: (
-            browse_overlay_axis("Z", z, vol, seg),
-            browse_overlay_axis("Y", y, vol, seg),
-            browse_overlay_axis("X", x, vol, seg),
+        fn=lambda z, y, x, vol, seg, st: (
+            browse_overlay_axis_fast("Z", z, vol, seg, st),
+            browse_overlay_axis_fast("Y", y, vol, seg, st),
+            browse_overlay_axis_fast("X", x, vol, seg, st),
         ),
-        inputs=[z_slider_seg, y_slider_seg, x_slider_seg, volume_state, seg_state],
+        inputs=[z_slider_seg, y_slider_seg, x_slider_seg, volume_state, seg_state, norm_state],
         outputs=[z_img_overlay, y_img_overlay, x_img_overlay]
+    ).then(
+        fn=lambda: (gr.update(visible=False), gr.update(interactive=True)),
+        inputs=[],
+        outputs=[loading_md, segment_btn]
     )
 
     # D) OVERLAY sliders
-    z_slider_seg.change(fn=lambda idx, vol, seg: browse_overlay_axis("Z", idx, vol, seg), inputs=[z_slider_seg, volume_state, seg_state], outputs=z_img_overlay)
-    y_slider_seg.change(fn=lambda idx, vol, seg: browse_overlay_axis("Y", idx, vol, seg), inputs=[y_slider_seg, volume_state, seg_state], outputs=y_img_overlay)
-    x_slider_seg.change(fn=lambda idx, vol, seg: browse_overlay_axis("X", idx, vol, seg), inputs=[x_slider_seg, volume_state, seg_state], outputs=x_img_overlay)
+    z_slider_seg.change(fn=lambda idx, vol, seg, st: browse_overlay_axis_fast("Z", idx, vol, seg, st), inputs=[z_slider_seg, volume_state, seg_state, norm_state], outputs=z_img_overlay)
+    y_slider_seg.change(fn=lambda idx, vol, seg, st: browse_overlay_axis_fast("Y", idx, vol, seg, st), inputs=[y_slider_seg, volume_state, seg_state, norm_state], outputs=y_img_overlay)
+    x_slider_seg.change(fn=lambda idx, vol, seg, st: browse_overlay_axis_fast("X", idx, vol, seg, st), inputs=[x_slider_seg, volume_state, seg_state, norm_state], outputs=x_img_overlay)
 
     # E) Reset
     reset_btn.click(
@@ -212,6 +237,7 @@ with gr.Blocks() as demo:
         outputs=[
             file_input,
             volume_state,
+            norm_state,
             group_input,
             segment_btn,
             z_slider, y_slider, x_slider,
@@ -239,19 +265,20 @@ with gr.Blocks() as demo:
                 except Exception as e:
                     print(f"[load_from_query] couldn't remove {tmp_path}: {e}")
 
-
                 # C) Return values for all components
+                stats = volume_stats(volume)
                 return [
-                    gr.update(value=tmp_path),
+                    gr.update(value=None),
                     volume,
+                    stats,
                     gr.update(visible=True),
                     gr.update(visible=True),
                     gr.update(maximum=get_axis_max(volume, "Z")),
                     gr.update(maximum=get_axis_max(volume, "Y")),
                     gr.update(maximum=get_axis_max(volume, "X")),
-                    browse_axis("Z", 0, volume),
-                    browse_axis("Y", 0, volume),
-                    browse_axis("X", 0, volume)
+                    browse_axis_fast("Z", 0, volume, stats),
+                    browse_axis_fast("Y", 0, volume, stats),
+                    browse_axis_fast("X", 0, volume, stats),
                 ]
 
             except Exception as e:
@@ -261,16 +288,21 @@ with gr.Blocks() as demo:
         return [
             None,
             None,
+            (0.0, 1.0),
             gr.update(visible=False),
             gr.update(visible=False),
             gr.update(maximum=0),
             gr.update(maximum=0),
             gr.update(maximum=0),
-            None,
-            None,
-            None
+            None, None, None
         ]
 
 
 if __name__ == "__main__":
-    demo.launch()
+    try:
+        demo.queue(concurrency_count=1, max_size=16).launch()
+    except TypeError:
+        try:
+            demo.queue(max_size=16).launch()
+        except TypeError:
+            demo.queue().launch()
