@@ -56,7 +56,7 @@ from pathlib import Path
 import shutil
 from gradio_client import Client, handle_file
 
-client = Client("https://huggingface.co/spaces/qchapp/3d-lungs-segmentation/")
+client = Client("qchapp/3d-lungs-segmentation")
 result_path = client.predict(
     file_obj=handle_file("https://zenodo.org/record/8099852/files/lungs_ct.tif?download=1"),
     api_name="/segment",
@@ -71,6 +71,6 @@ print("Saved the mask in:", dest.resolve())
 ---
 
 ## About Lungs Segmentation
-If you are interesten in the package used for segmentation please check the following [GitHub repository](https://github.com/qchapp/lungs-segmentation)!
+If you are interested in the package used for segmentation please check the following [GitHub repository](https://github.com/qchapp/lungs-segmentation)!
 
 ---
