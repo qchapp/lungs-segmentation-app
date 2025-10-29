@@ -13,15 +13,19 @@ The application is running on [Hugging Face](https://huggingface.co/), try it us
 #### Example File
 If you don't have your own `.tif` image, the app includes a built-in example file that can be used directly from the UI by clicking **"Try an example!"**.
 
-#### Load from URL (file_url parameter)
-You can also provide a `.tif` file hosted online using a URL parameter.
+#### Load from URL (?file_url)
+You can load a remote .tif/.tiff by appending a file_url query parameter to the app URL. Prefer a direct-download link.
 
-To do so, simply append `?file_url=...` to your app's URL.
+- Example on Hugging Face:
+  https://huggingface.co/spaces/qchapp/3d-lungs-segmentation/?file_url=https://zenodo.org/record/8099852/files/lungs_ct.tif?download=1
 
-##### Example (hosted on Hugging Face):
-`https://huggingface.co/spaces/qchapp/3d-lungs-segmentation/?file_url=https://zenodo.org/record/8099852/files/lungs_ct.tif`
+- Example when running locally:
+  http://127.0.0.1:7860/?file_url=https://zenodo.org/record/8099852/files/lungs_ct.tif?download=1 (or change to point to the corresponding local URL)
 
-The application will automatically download the file and load it into the viewer (the operation can take some time).
+Notes:
+- Large files may take time to download and render.
+- Only .tif/.tiff files are supported.
+- If your link isn’t a direct file URL (e.g., redirects to an HTML page), the download will fail. In that case, use the host’s “Direct download” URL or URL‑encode the value of file_url.
 
 ---
 
