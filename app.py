@@ -1,13 +1,23 @@
 import gradio as gr
-from core.utils import *
-
+from core.utils import (
+    example_file_path,
+    _load_volume_from_any,
+    volume_stats,
+    browse_axis_fast,
+    browse_overlay_axis_fast,
+    segment_volume,
+    APP_TMP_DIR,
+    clean_temp,
+    write_mask_tif,
+)
 import urllib.request
-import tempfile
-import os, time, threading, atexit
-from core.utils import APP_TMP_DIR, clean_temp, write_mask_tif
+import time, threading, tempfile, os
+from typing import Union
+from gradio import skip
+
 
 CLEAN_EVERY_SEC = 1800      # every 30 min
-CLEAN_AGE_HOURS = 6         # every 6 hours
+CLEAN_AGE_HOURS = 12        # every 12 hours
 
 def _start_cleanup_daemon():
     def _loop():
@@ -20,8 +30,6 @@ def _start_cleanup_daemon():
     threading.Thread(target=_loop, daemon=True).start()
 
 _start_cleanup_daemon()
-atexit.register(lambda: clean_temp(0))
-
 
 def get_axis_max(volume, axis):
     """Get the maximum index of each axis."""
@@ -33,67 +41,60 @@ def get_axis_max(volume, axis):
 def reset_app():
     """Reset everything to the initial state."""
     return (
-        gr.update(value=None),
-        None,
-        None,
-        gr.update(visible=False),
+        gr.update(value=None),   # file_input
+        None,                    # volume_state
+        None,                    # seg_state
+        gr.update(visible=False),# group_input
+        gr.update(visible=False),# segment_btn
         gr.update(value=0), gr.update(value=0), gr.update(value=0),
         gr.update(value=None), gr.update(value=None), gr.update(value=None),
-        gr.update(visible=False),
+        gr.update(visible=False),# group_seg
         gr.update(value=0), gr.update(value=0), gr.update(value=0),
         gr.update(value=None), gr.update(value=None), gr.update(value=None)
     )
 
-def segment_api(file_obj):
-    """
-    Accepts a TIF/TIFF via API, returns a TIF mask file path.
-    """
-    if not file_obj:
-        raise gr.Error("No file provided")
-
-    # Read volume (and let load_volume clean the temp upload)
-    volume = load_volume(file_obj)
-    seg = segment_volume(volume)  # uses your existing model wrapper
+def segment_api(file_obj: Union[dict, str, bytes]) -> str:
+    """Segments a 3D TIF/TIFF volume and returns a server path to a compressed TIF mask."""
+    volume = _load_volume_from_any(file_obj)
+    seg = segment_volume(volume)
     if seg is None:
         raise gr.Error("Segmentation failed")
-
-    # Write compressed TIF to app temp; return file path
     out_path = write_mask_tif(seg)
     return out_path
 
 def run_seg_with_progress(volume, progress=gr.Progress(track_tqdm=True)):
-    """
-    Thin wrapper to surface a progress bar in Gradio while the model runs.
-    """
+    """Surface a progress bar in Gradio while the model runs."""
     if volume is None:
         return None
     progress(0.1, desc="Preparing model…")
-    seg = segment_volume(volume)  # existing function from utils.py
+    seg = segment_volume(volume)
     progress(1.0, desc="Done")
     return seg
 
 with gr.Blocks(delete_cache=(1800, 21600)) as demo:
-    # ---- API (hidden) ----
-    _api_in = gr.File(file_types=[".tif", ".tiff"], visible=False)
-    _api_out = gr.File(visible=False)
-    gr.Button(visible=False).click(
-        fn=segment_api,
-        inputs=_api_in,
-        outputs=_api_out,
-        api_name="segment"
+    # Expose ONLY the /segment API/MCP tool
+    gr.api(
+        segment_api,
+        api_name="segment",
+        api_description="Accepts a 3D TIF/TIFF (URL, uploaded file, or raw bytes) and returns a path to the compressed TIF mask."
     )
 
-    # ---- UI ----
+    # -------- UI --------
     gr.Markdown("# 🐭 3D Lungs Segmentation")
     gr.Markdown("### ⚠️ Note: the visualization may take some time to render!")
 
+    # States
+    last_url_state = gr.State("")   # last processed ?file_url
     volume_state = gr.State()
     seg_state = gr.State()
     norm_state = gr.State()
 
-    file_input = gr.File(file_types=[".tif", ".tiff"], label="Upload your 3D TIF or TIFF file")
+    file_input = gr.File(
+        file_types=[".tif", ".tiff"],
+        file_count="single",
+        label="Upload your 3D TIF or TIFF file"
+    )
 
-    # ---- Example loader ----
     gr.Examples(
         examples=[[example_file_path]],
         inputs=[file_input],
@@ -101,7 +102,6 @@ with gr.Blocks(delete_cache=(1800, 21600)) as demo:
         examples_per_page=1
     )
 
-    # ---- RAW SLICES VIEWER ----
     with gr.Group(visible=False) as group_input:
         gr.Markdown("### Raw Volume Slices")
         with gr.Row():
@@ -114,10 +114,8 @@ with gr.Blocks(delete_cache=(1800, 21600)) as demo:
             x_img = gr.Image(label="X")
 
     segment_btn = gr.Button("Segment", visible=False)
-
     loading_md = gr.Markdown("⏳ **Segmenting…** This can take a bit.", visible=False)
 
-    # ---- OVERLAY SLICES VIEWER ----
     with gr.Group(visible=False) as group_seg:
         gr.Markdown("### Segmentation Overlay Slices")
         with gr.Row():
@@ -133,61 +131,81 @@ with gr.Blocks(delete_cache=(1800, 21600)) as demo:
 
     gr.Markdown("#### 📝 This work is based on the Bachelor Project of Quentin Chappuis 2024; for more information, consult the [repository](https://github.com/qchapp/lungs-segmentation)!")
 
-    # ---- CALLBACKS ----
-
-    # A) Load volume
+    # -------- Callbacks (hidden from API/MCP) --------
     file_input.change(
-        fn=load_volume,
+        fn=lambda f: _load_volume_from_any(f) if f is not None else skip(),
         inputs=file_input,
-        outputs=volume_state
+        outputs=volume_state,
+        show_api=False
     ).then(
-        fn=volume_stats,
+        fn=lambda vol: volume_stats(vol) if vol is not None else skip(),
         inputs=volume_state,
-        outputs=norm_state
+        outputs=norm_state,
+        show_api=False
     ).then(
-        fn=lambda vol: gr.update(visible=(vol is not None)),
+        fn=lambda vol: gr.update(visible=True) if vol is not None else skip(),
         inputs=volume_state,
-        outputs=group_input
+        outputs=group_input,
+        show_api=False
     ).then(
-        fn=lambda vol: gr.update(visible=(vol is not None)),
+        fn=lambda vol: gr.update(visible=True) if vol is not None else skip(),
         inputs=volume_state,
-        outputs=segment_btn
+        outputs=segment_btn,
+        show_api=False
     ).then(
         fn=lambda vol: (
             gr.update(maximum=get_axis_max(vol, "Z")),
             gr.update(maximum=get_axis_max(vol, "Y")),
             gr.update(maximum=get_axis_max(vol, "X")),
-        ),
+        ) if vol is not None else (skip(), skip(), skip()),
         inputs=volume_state,
-        outputs=[z_slider, y_slider, x_slider]
+        outputs=[z_slider, y_slider, x_slider],
+        show_api=False
     ).then(
         fn=lambda vol, st: (
             browse_axis_fast("Z", 0, vol, st),
             browse_axis_fast("Y", 0, vol, st),
             browse_axis_fast("X", 0, vol, st),
-        ),
+        ) if vol is not None else (skip(), skip(), skip()),
         inputs=[volume_state, norm_state],
-        outputs=[z_img, y_img, x_img]
+        outputs=[z_img, y_img, x_img],
+        show_api=False
     )
 
-    # B) RAW sliders
-    z_slider.change(fn=lambda idx, vol, st: browse_axis_fast("Z", idx, vol, st), inputs=[z_slider, volume_state, norm_state], outputs=z_img)
-    y_slider.change(fn=lambda idx, vol, st: browse_axis_fast("Y", idx, vol, st), inputs=[y_slider, volume_state, norm_state], outputs=y_img)
-    x_slider.change(fn=lambda idx, vol, st: browse_axis_fast("X", idx, vol, st), inputs=[x_slider, volume_state, norm_state], outputs=x_img)
+    z_slider.change(
+        fn=lambda idx, vol, st: browse_axis_fast("Z", idx, vol, st),
+        inputs=[z_slider, volume_state, norm_state],
+        outputs=z_img,
+        show_api=False
+    )
+    y_slider.change(
+        fn=lambda idx, vol, st: browse_axis_fast("Y", idx, vol, st),
+        inputs=[y_slider, volume_state, norm_state],
+        outputs=y_img,
+        show_api=False
+    )
+    x_slider.change(
+        fn=lambda idx, vol, st: browse_axis_fast("X", idx, vol, st),
+        inputs=[x_slider, volume_state, norm_state],
+        outputs=x_img,
+        show_api=False
+    )
 
-    # C) Segment
     segment_btn.click(
         fn=lambda: (gr.update(visible=True), gr.update(interactive=False)),
         inputs=[],
-        outputs=[loading_md, segment_btn]
+        outputs=[loading_md, segment_btn],
+        show_api=False
     ).then(
-        fn=run_seg_with_progress,  # <— shows a progress bar
+        fn=run_seg_with_progress,
         inputs=volume_state,
-        outputs=seg_state
+        outputs=seg_state,
+        show_api=False
     ).then(
         fn=lambda s: gr.update(visible=(s is not None)),
         inputs=seg_state,
-        outputs=group_seg
+        outputs=group_seg,
+        show_api=False
     ).then(
         fn=lambda vol: (
             gr.update(maximum=get_axis_max(vol, "Z")),
@@ -195,7 +213,8 @@ with gr.Blocks(delete_cache=(1800, 21600)) as demo:
             gr.update(maximum=get_axis_max(vol, "X")),
         ),
         inputs=volume_state,
-        outputs=[z_slider_seg, y_slider_seg, x_slider_seg]
+        outputs=[z_slider_seg, y_slider_seg, x_slider_seg],
+        show_api=False
     ).then(
         fn=lambda z, y, x, vol, seg, st: (
             browse_overlay_axis_fast("Z", z, vol, seg, st),
@@ -203,19 +222,34 @@ with gr.Blocks(delete_cache=(1800, 21600)) as demo:
             browse_overlay_axis_fast("X", x, vol, seg, st),
         ),
         inputs=[z_slider_seg, y_slider_seg, x_slider_seg, volume_state, seg_state, norm_state],
-        outputs=[z_img_overlay, y_img_overlay, x_img_overlay]
+        outputs=[z_img_overlay, y_img_overlay, x_img_overlay],
+        show_api=False
     ).then(
         fn=lambda: (gr.update(visible=False), gr.update(interactive=True)),
         inputs=[],
-        outputs=[loading_md, segment_btn]
+        outputs=[loading_md, segment_btn],
+        show_api=False
     )
 
-    # D) OVERLAY sliders
-    z_slider_seg.change(fn=lambda idx, vol, seg, st: browse_overlay_axis_fast("Z", idx, vol, seg, st), inputs=[z_slider_seg, volume_state, seg_state, norm_state], outputs=z_img_overlay)
-    y_slider_seg.change(fn=lambda idx, vol, seg, st: browse_overlay_axis_fast("Y", idx, vol, seg, st), inputs=[y_slider_seg, volume_state, seg_state, norm_state], outputs=y_img_overlay)
-    x_slider_seg.change(fn=lambda idx, vol, seg, st: browse_overlay_axis_fast("X", idx, vol, seg, st), inputs=[x_slider_seg, volume_state, seg_state, norm_state], outputs=x_img_overlay)
+    z_slider_seg.change(
+        fn=lambda idx, vol, seg, st: browse_overlay_axis_fast("Z", idx, vol, seg, st),
+        inputs=[z_slider_seg, volume_state, seg_state, norm_state],
+        outputs=z_img_overlay,
+        show_api=False
+    )
+    y_slider_seg.change(
+        fn=lambda idx, vol, seg, st: browse_overlay_axis_fast("Y", idx, vol, seg, st),
+        inputs=[y_slider_seg, volume_state, seg_state, norm_state],
+        outputs=y_img_overlay,
+        show_api=False
+    )
+    x_slider_seg.change(
+        fn=lambda idx, vol, seg, st: browse_overlay_axis_fast("X", idx, vol, seg, st),
+        inputs=[x_slider_seg, volume_state, seg_state, norm_state],
+        outputs=x_img_overlay,
+        show_api=False
+    )
 
-    # E) Reset
     reset_btn.click(
         fn=reset_app,
         inputs=[],
@@ -224,85 +258,49 @@ with gr.Blocks(delete_cache=(1800, 21600)) as demo:
             volume_state,
             seg_state,
             group_input,
+            segment_btn,
             z_slider, y_slider, x_slider,
             z_img, y_img, x_img,
             group_seg,
             z_slider_seg, y_slider_seg, x_slider_seg,
             z_img_overlay, y_img_overlay, x_img_overlay
-        ]
+        ],
+        show_api=False
     )
 
-    # ---- HANDLE QUERY PARAMETERS ----
+
+    # -------- URL loader --------
     @demo.load(
-        outputs=[
-            file_input,
-            volume_state,
-            norm_state,
-            group_input,
-            segment_btn,
-            z_slider, y_slider, x_slider,
-            z_img, y_img, x_img
-        ]
+        inputs=[last_url_state],
+        outputs=[last_url_state, file_input],  # only these two
+        show_api=False
     )
-    def load_from_query(request: gr.Request):
+    def load_from_query(prev_url, request: gr.Request):
         params = request.query_params
+        url = params.get("file_url") or ""
 
-        if "file_url" in params:
+        # No URL -> no-op
+        if not url:
+            return [gr.skip(), gr.skip()]
+
+        # 🔧 Short-circuit: same URL as last time -> no-op
+        if url == prev_url:
+            return [gr.skip(), gr.skip()]
+
+        # Download to CLOSED temp file and programmatically set the File value.
+        fd, tmp_path = tempfile.mkstemp(suffix=".tif", dir=str(APP_TMP_DIR))
+        os.close(fd)
+        try:
+            urllib.request.urlretrieve(url, tmp_path)
+        except Exception as e:
             try:
-                # A) Download the file from the URL to a managed temporary path
-                url = params["file_url"]
-                fd, tmp_path = tempfile.mkstemp(suffix=".tif", dir=str(APP_TMP_DIR))
-                os.close(fd)
-                urllib.request.urlretrieve(url, tmp_path)
+                os.remove(tmp_path)
+            except Exception:
+                pass
+            raise gr.Error(f"Failed to download file_url: {e}")
 
-                # B) Open the file as a binary object
-                with open(tmp_path, "rb") as f:
-                    volume = load_volume(f)
-
-                # Remove downloaded temp file now that it's in memory
-                try:
-                    os.remove(tmp_path)
-                except Exception as e:
-                    print(f"[load_from_query] couldn't remove {tmp_path}: {e}")
-
-                # C) Return values for all components
-                stats = volume_stats(volume)
-                return [
-                    gr.update(value=None),
-                    volume,
-                    stats,
-                    gr.update(visible=True),
-                    gr.update(visible=True),
-                    gr.update(maximum=get_axis_max(volume, "Z")),
-                    gr.update(maximum=get_axis_max(volume, "Y")),
-                    gr.update(maximum=get_axis_max(volume, "X")),
-                    browse_axis_fast("Z", 0, volume, stats),
-                    browse_axis_fast("Y", 0, volume, stats),
-                    browse_axis_fast("X", 0, volume, stats),
-                ]
-
-            except Exception as e:
-                print(f"[Error loading file_url] {e}")
-
-        # Fallback if no file_url or failure
-        return [
-            None,
-            None,
-            (0.0, 1.0),
-            gr.update(visible=False),
-            gr.update(visible=False),
-            gr.update(maximum=0),
-            gr.update(maximum=0),
-            gr.update(maximum=0),
-            None, None, None
-        ]
+        return [url, gr.update(value=tmp_path)]
 
 
 if __name__ == "__main__":
-    try:
-        demo.queue(concurrency_count=1, max_size=16).launch()
-    except TypeError:
-        try:
-            demo.queue(max_size=16).launch()
-        except TypeError:
-            demo.queue().launch()
+    demo.queue(default_concurrency_limit=1, max_size=16).launch(mcp_server=True)

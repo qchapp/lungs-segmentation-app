@@ -18,13 +18,10 @@ You can also provide a `.tif` file hosted online using a URL parameter.
 
 To do so, simply append `?file_url=...` to your app's URL.
 
-##### Example (local):
-`http://localhost:7860/?file_url=https://zenodo.org/record/8099852/files/lungs_ct.tif`
-
 ##### Example (hosted on Hugging Face):
 `https://huggingface.co/spaces/qchapp/3d-lungs-segmentation/?file_url=https://zenodo.org/record/8099852/files/lungs_ct.tif`
 
-The application will automatically download the file and load it into the viewer.
+The application will automatically download the file and load it into the viewer (the operation can take some time).
 
 ---
 
@@ -45,7 +42,7 @@ Run:
 ```sh
 python app.py
 ```
-And go to http://localhost:7860/.
+And go to the indicated local URL.
 
 ---
 
