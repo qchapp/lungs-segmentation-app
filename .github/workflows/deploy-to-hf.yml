@@ -1,0 +1,55 @@
+name: Deploy to Hugging Face Space (qchapp/3d-lungs-segmentation)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Generate Hugging Face README with YAML frontmatter
+        run: |
+          # Keep original README content
+          mv README.md README.project.md
+
+          # Create new README with HF config at the top
+          cat << 'EOF' > README.md
+          ---
+          title: Lungs Segmentation Web App
+          emoji: 🖥️
+          colorFrom: indigo
+          colorTo: green
+          sdk: gradio
+          sdk_version: 5.49.1
+          app_file: app.py
+          pinned: false
+          ---
+
+          EOF
+
+          # Append the original README content below the YAML block
+          cat README.project.md >> README.md
+
+          # Commit this *locally* so we can push it to the HF remote
+          git config user.email "ci@github.actions"
+          git config user.name "github-actions[bot]"
+          git add README.md
+          git commit -m "Add HF Spaces frontmatter to README for deployment" || echo "No changes to commit"
+
+      - name: Push main to HF Space qchapp/3d-lungs-segmentation
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          # Push the current branch (main, with the local README commit) to the Space's main
+          git push --force \
+            https://qchapp:${HF_TOKEN}@huggingface.co/spaces/qchapp/3d-lungs-segmentation \
+            HEAD:main
