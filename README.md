@@ -2,7 +2,7 @@
 A web-based application for automated lung segmentation using deep learning, powered by **Gradio** and **PyTorch**. This tool allows users to upload lung images and obtain segmented outputs efficiently.
 
 <p align="center">
-    <img src="images/app.png" height="700">
+    <img src="https://raw.githubusercontent.com/qchapp/lungs-segmentation-app/refs/heads/master/images/app.png" height="700">
 </p>
 
 ---

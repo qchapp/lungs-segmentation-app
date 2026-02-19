@@ -1,0 +1,3 @@
+# Don't deploy images to the Space
+*.png
+images/*.png
