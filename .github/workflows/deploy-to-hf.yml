@@ -16,37 +16,61 @@ jobs:
           fetch-depth: 0
           lfs: true
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
       - name: Generate Hugging Face README with YAML frontmatter (no commit)
+        shell: bash
         run: |
           set -euo pipefail
 
           tmp="$(mktemp)"
-          cat > "$tmp" <<'EOF'
-          ---
-          title: Lungs Segmentation Web App
-          emoji: 🖥️
-          colorFrom: indigo
-          colorTo: green
-          sdk: gradio
-          sdk_version: 5.49.1
-          app_file: app.py
-          pinned: false
-          ---
-
-          EOF
-
-          cat README.md >> "$tmp"
+          {
+            echo '---'
+            echo 'title: Lungs Segmentation Web App'
+            echo 'emoji: 🖥️'
+            echo 'colorFrom: indigo'
+            echo 'colorTo: green'
+            echo 'sdk: gradio'
+            echo 'sdk_version: 5.49.1'
+            echo 'app_file: app.py'
+            echo 'pinned: false'
+            echo '---'
+            echo
+            cat README.md
+          } > "$tmp"
           mv "$tmp" README.md
 
       - name: Deploy to HF Space (skip png)
+        shell: bash
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          pip install -U "huggingface_hub[cli]"
-          huggingface-cli login --token "$HF_TOKEN"
-          huggingface-cli upload qchapp/3d-lungs-segmentation . \
+          set -euo pipefail
+
+          if [ -z "${HF_TOKEN:-}" ]; then
+            echo "HF_TOKEN is missing (add it in GitHub repo secrets)"
+            exit 1
+          fi
+
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade huggingface_hub
+
+          # Ensure scripts installed with --user are found (common in CI)
+          echo "$(python -m site --user-base)/bin" >> "$GITHUB_PATH"
+
+          # Sanity check
+          command -v hf
+          hf --version
+
+          # Upload current folder to the Space repo root, excluding pngs
+          hf upload qchapp/3d-lungs-segmentation . . \
             --repo-type space \
+            --token "$HF_TOKEN" \
             --exclude "*.png" \
             --exclude "images/*.png" \
             --exclude ".git/*" \
-            --exclude ".github/*"
+            --exclude ".github/*" \
+            --commit-message "Sync from GitHub Actions (skip png)"
