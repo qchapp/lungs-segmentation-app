@@ -58,12 +58,13 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --upgrade huggingface_hub
 
-          # Ensure scripts installed with --user are found (common in CI)
+          # Ensure the hf executable is on PATH (usually already is, but harmless)
           echo "$(python -m site --user-base)/bin" >> "$GITHUB_PATH"
 
-          # Sanity check
+          # Sanity checks (no --version flag on hf)
           command -v hf
-          hf --version
+          python -c "import huggingface_hub; print('huggingface_hub', huggingface_hub.__version__)"
+          hf --help | head -n 5
 
           # Upload current folder to the Space repo root, excluding pngs
           hf upload qchapp/3d-lungs-segmentation . . \
