@@ -14,9 +14,6 @@ import urllib.request
 import time, threading, tempfile, os
 from typing import Union
 from gradio import skip
-import shutil
-import uuid
-from pathlib import Path
 
 
 CLEAN_EVERY_SEC = 1800      # every 30 min
@@ -56,21 +53,18 @@ def reset_app():
         gr.update(value=None), gr.update(value=None), gr.update(value=None)
     )
 
-def segment_api(file_obj: Union[dict, str, bytes]) -> str:
-    """Segments a 3D TIF/TIFF volume and returns a server path to a compressed TIF mask."""
+def segment_api(file_obj: Union[dict, str, bytes]) -> gr.FileData:
     volume = _load_volume_from_any(file_obj)
     seg = segment_volume(volume)
     if seg is None:
         raise gr.Error("Segmentation failed")
     out_path = write_mask_tif(seg)
 
-    gr_tmp = Path(os.environ.get("GRADIO_TEMP_DIR", tempfile.gettempdir()))
-    gr_tmp.mkdir(parents=True, exist_ok=True)
-
-    safe_path = gr_tmp / f"{uuid.uuid4().hex}_mask.tif"
-    shutil.copyfile(out_path, safe_path)
-
-    return str(safe_path)
+    return gr.FileData(
+        path=out_path,
+        orig_name=os.path.basename(out_path),
+        mime_type="image/tiff",
+    )
 
 def run_seg_with_progress(volume, progress=gr.Progress(track_tqdm=True)):
     """Surface a progress bar in Gradio while the model runs."""
