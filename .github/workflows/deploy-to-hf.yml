@@ -1,4 +1,4 @@
-name: Deploy to Hugging Face Space (qchapp/3d-lungs-segmentation)
+name: Auto deploy to Hugging Face Space (qchapp/3d-lungs-segmentation)
 
 on:
   push:
